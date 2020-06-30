@@ -230,10 +230,12 @@ for i in range(30000):
     
     x, Te, ne, Z = epperlein_short(nx, L ,z_1, n_1, t_1) 
     x, Te, ne, Z = TwoTemperatureBath(nx, L, z_1, t_1, t_2) 
-
-    x, Te, ne, Z = Ramp(nx, L, lower_cut_off = lower , upper_cut_off = upper, Te_low = t_1, Te_up = t_2, ne_low = t_1, ne_top = t_2 , z_low = z_1, z_top = z_2) 
-    x, Te, ne, Z = AllSmoothRamp(nx, L, lower_cutof = lower , upper_cutof = upper, Te_begin = t_2 * upper, Te_end = t_1 * lower, Te_low = t_1, Te_top = t_2,
-                                 ne_begin =n_2 * upper , ne_end =n_1*lower, ne_low = n_1, ne_top =n_2 , Z_begin = z_2*upper, Z_end = z_1*lower ,z_low = z_1, z_top = z_2) 
+    # x, Te, ne, Z = Ramp(nx, L, lower_cut_off = lower , upper_cut_off = upper, Te_low = t_1, Te_up = t_2, 
+    #                     ne_low = t_1, ne_top = t_2 , z_low = z_1, z_top = z_2) 
+    # x, Te, ne, Z = AllSmoothRamp(nx, L, lower_cutof = lower , upper_cutof = upper, Te_begin = t_2 * upper, 
+                                # Te_end = t_1 * lower, Te_low = t_1, Te_top = t_2, ne_begin =n_2 * upper,
+                                # ne_end =n_1*lower, ne_low = n_1, ne_top =n_2 , Z_begin = z_2*upper,
+                                # Z_end = z_1*lower ,z_low = z_1, z_top = z_2) 
 te_h5.close()
 ne_h5.close()
 z_h5.close()
