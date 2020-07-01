@@ -3,6 +3,7 @@ import h5py
 import os 
 import matplotlib.pyplot as plt 
 import random as rand 
+import math
 rand.seed(0)
 np.random.seed(0)
 #global constant
@@ -36,12 +37,12 @@ def TwoTemperatureBath(nx, L, Z, Te_top, Te_low):
     density = ni * 1.67E-27
     return(central,Te, ne,Z)
 
-def epperlein_short(nx, L, Z_ = 37.25, ne_ = 1e27, Te_ = 100., sin= False):
+def epperlein_short(nx, L, Z_ = 37.25, ne_ = 1e27, Te_ = 100., perturb = 1e-3, sin = False):
 
     x_l = 0
     x_u = L
     initial_coord = np.linspace(x_l, x_u, nx+1, dtype=np.float64)
-    centered_coord = np.array([(initial_coord[i] + initial_coord[i+1]) /2 for i in range(len(initial_coord) -1)], dtype=np.float64)
+    x_centered = np.array([(initial_coord[i] + initial_coord[i+1]) /2 for i in range(len(initial_coord) -1)], dtype=np.float64)
     Z = np.zeros(nx) + Z_#37.25
     
     ne = np.zeros(nx) + ne_# 1e27
@@ -49,12 +50,13 @@ def epperlein_short(nx, L, Z_ = 37.25, ne_ = 1e27, Te_ = 100., sin= False):
     
     ##Relevant for periodic systems .. fluid cannot be
     if sin: 
-        temperatureE = np.zeros(nx, dtype=np.float64) + Te_  + 1E-3 * Te_  * np.sin((2*np.pi * centered_coord) / np.max(centered_coord), dtype=np.float64)
+        Te = np.zeros(nx, dtype=np.float64) + Te_  + perturb * Te_  * np.sin((2*np.pi * x_centered) / np.max(x_centered), dtype=np.float64)
     else:
     ##Reflective
-        temperatureE = np.zeros(nx, dtype=np.float64) + Te_  + 1e-3 * Te_  * np.cos((np.pi * centered_coord) / np.max(centered_coord), dtype=np.float64)
+        Te = np.zeros(nx, dtype=np.float64) + Te_  + perturb * Te_  * np.cos((np.pi * x_centered) / np.max(x_centered), dtype=np.float64)
 
-    return(centered_coord, temperatureE, ne, Z)
+
+    return(x_centered, Te, ne, Z)
 
 def AllSmoothRamp(nx, L, lower_cutof, upper_cutof, Te_begin, Te_end, Te_low, Te_top, ne_begin, ne_end, ne_low, ne_top, Z_begin, Z_end, z_low, z_top):
     x_up = np.linspace(0, lower_cutof*L, int(nx*0.33333))
@@ -182,18 +184,39 @@ def Ramp(nx, L, lower_cut_off, upper_cut_off, Te_low, Te_up, ne_low, ne_top, z_l
     Z_Down = z_low#36.64
     Z = smooth(x_centered, Z_Up, Z_Down, lower_limit, upper_limit) 
     
-    plt.figure(1)
-    plt.plot(x_centered, Te , 'xr-', label = 'Te')
-    plt.legend()
-    plt.figure(2)
-    plt.plot(x_centered, ne,'xr-', label = 'ne')
-    plt.legend()
-    plt.figure(3)
-    plt.plot(x_centered, Z,'xr-', label = 'Z')
-    plt.legend()
-    plt.figure(4)
-    plt.show()
     return(x_centered, Te, ne, Z)
+
+def SpitzerHarm(x, T, ne, Z):
+    
+    def lambda_ei(T_norm , n_norm, Z_norm, return_arg = False):
+        coulomb_logs = []
+        T_norm = T_norm
+
+        for T,n,Z in zip(T_norm, n_norm, Z_norm):
+            if T < 10.00 * Z ** 2:
+                result = 23.00 - math.log(math.sqrt(n * 1.00E-6) * Z * (T) ** (-3.00/2.00))
+            else:
+                result = 24.00 - math.log(math.sqrt(n * 1.00E-6) / (T))   
+
+            if return_arg:
+                return result
+            else:
+                coulomb_logs.append(result)
+        return coulomb_logs
+
+    coulomb_log = np.array(lambda_ei(T, ne , Z))
+    kappaE = 1.843076667547614E-10 * pow(T, 2.5) * pow(coulomb_log, -1) *  pow(Z, -1)
+    nx = len(Te)
+    HeatFlowE = np.zeros(nx + 1)
+    gradTe = np.zeros(nx + 1)
+    for i in range(1, nx):
+        centered_ke = 0.5 * (kappaE[i] + kappaE[i - 1])
+        gradTe[i] = ((Te[i] - Te[i - 1]) / (x[i] - x[i - 1]))
+        HeatFlowE[i] = centered_ke * gradTe[i] 
+    
+    HeatFlowE[0] = 0
+    HeatFlowE[-1] = 0
+    return(-1 * HeatFlowE[1:-1], gradTe[1:-1])
 
 def getTwoRandom():
     k = rand.random()
@@ -202,12 +225,34 @@ def getTwoRandom():
         getTwoRandom() 
     else:
         return(k, k_1)
+def saveToHdF5(hdf5_file, i, GradTe, Te, ne, Z, x, qe, Training):
+    if training:
+        path = "x_training/"
+        hdf5_file.create_dataset("".join([path, "GradTe/", str(i)]),
+                            data = GradTe, compression="gzip")
+        hdf5_file.create_dataset("".join([path, "Te/", str(i)]),
+                            data = Te, compression="gzip")
+        hdf5_file.create_dataset("".join([path, "ne/", str(i)]),
+                            data = ne, compression="gzip")
+        hdf5_file.create_dataset("".join([path, "Z/", str(i)]),
+                            data = Z, compression="gzip")
+        hdf5_file.create_dataset("".join(["y_training/", "Qe/", str(i)]),
+                            data = qe, compression="gzip")
+    else:
+        path = "x_testing/"
+        hdf5_file.create_dataset("".join([path, "GradTe/", str(i)]),
+                            data = GradTe, compression="gzip")
+        hdf5_file.create_dataset("".join([path, "Te/", str(i)]),
+                            data = Te, compression="gzip")
+        hdf5_file.create_dataset("".join([path, "ne/", str(i)]),
+                            data = ne, compression="gzip")
+        hdf5_file.create_dataset("".join([path, "Z/", str(i)]),
+                            data = Z, compression="gzip")
+        hdf5_file.create_dataset("".join(["y_testing/", "Qe/", str(i)]),
+                            data = qe, compression="gzip")
 
 base_path = "/Users/shiki/DATA/KINN_RELATED"
-te_h5 = h5py.File(os.path.join(base_path, "Te.hdf5"), "w")
-ne_h5 = h5py.File(os.path.join(base_path, "ne.hdf5"), "w")
-z_h5 = h5py.File(os.path.join(base_path, "Z.hdf5"), "w")
-x_h5 = h5py.File(os.path.join(base_path, "x.hdf5"), "w")
+Data_h5 = h5py.File(os.path.join(base_path, "Training.hdf5"), "w")
 
 ne_range = np.linspace(1e19, 1e28, 100) #1e21-1e28
 te_range =  np.linspace(1, 3000, 100)# 1ev - 3kev
@@ -215,7 +260,10 @@ z_range =   np.linspace(2, 38, 100)#2 - 38
 L_range =  np.linspace(3E-3, 3, 100)#3mm - 3m
 nx = 101
 n = 100
-for i in range(30000):
+no_samples = 300000
+training = True
+j = 0 
+for i in range(no_samples):
     L = L_range[np.random.randint(0, n)]
     z_1 = z_range[np.random.randint(0, n)]
     z_2 = z_range[np.random.randint(0, n)]
@@ -223,20 +271,27 @@ for i in range(30000):
     n_2 = ne_range[np.random.randint(0, n)]
     t_1 = te_range[np.random.randint(0, n)]
     t_2 = te_range[np.random.randint(0, n)]
-    lower, upper = getTwoRandom()  
-    Te_random = np.random.uniform(0.94, 1.06)
-    ne_random = np.random.uniform(0.90, 1.1)
+    # lower, upper = getTwoRandom()  
+    Te_random = np.random.uniform(1E-6, 0.9)
+    # ne_random = np.random.uniform(0.90, 1.1)
+    if i == int(no_samples*0.85):
+        training = False
     
+    x, Te, ne, Z = epperlein_short(nx, L ,z_1, n_1, t_1, Te_random) 
+    qe, gradTe = SpitzerHarm(x, Te, ne, Z)
+    saveToHdF5(Data_h5, j, gradTe, Te, ne, Z, x, qe, training)
     
-    x, Te, ne, Z = epperlein_short(nx, L ,z_1, n_1, t_1) 
+    j+=1
+
     x, Te, ne, Z = TwoTemperatureBath(nx, L, z_1, t_1, t_2) 
+    qe, gradTe = SpitzerHarm(x, Te, ne, Z)
+    saveToHdF5(Data_h5, j, gradTe, Te, ne, Z, x, qe, training)
+
+    j+=1
     # x, Te, ne, Z = Ramp(nx, L, lower_cut_off = lower , upper_cut_off = upper, Te_low = t_1, Te_up = t_2, 
     #                     ne_low = t_1, ne_top = t_2 , z_low = z_1, z_top = z_2) 
     # x, Te, ne, Z = AllSmoothRamp(nx, L, lower_cutof = lower , upper_cutof = upper, Te_begin = t_2 * upper, 
                                 # Te_end = t_1 * lower, Te_low = t_1, Te_top = t_2, ne_begin =n_2 * upper,
                                 # ne_end =n_1*lower, ne_low = n_1, ne_top =n_2 , Z_begin = z_2*upper,
                                 # Z_end = z_1*lower ,z_low = z_1, z_top = z_2) 
-te_h5.close()
-ne_h5.close()
-z_h5.close()
-x_h5.close()
+Data_h5.close()

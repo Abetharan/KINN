@@ -9,24 +9,6 @@ from sklearn.datasets import load_iris
 from sklearn.tree import DecisionTreeClassifier
 from collections import Counter
 
-#Neural Network
-def initNN(no_inputs, no_outputs, no_branches, all_weights, all_biases):
-    nn_input = keras.Input(shape = (no_inputs), name ="Latent_space_input")
-    no_dense = no_inputs
-    for i, nb in enumerate(no_branches):
-        no_dense = no_dense + nb
-        weights = tf.constant_initializer(all_weights[i])
-        bias = tf.constant_initializer(all_bias[i])
-        if i == 0:
-            x = layers.Dense(no_dense, activation= "relu", kernel_initializer= all_weights, 
-                                             bias_initializer=all_bias)(nn_input)
-        else:
-            x = layers.Dense(no_dense, activation= "relu")(x)
-    nn_output = layers.Dense(no_outputs)(x)
-    nn = keras.Model(nn_input, nn_output, name ="decoder")
-    nn.summary()
-    return nn
-
 # The tree structure can be traversed to compute various properties such
 # as the depth of each node and whether or not it is a leaf.
 def printUsefulTree(n_nodes, node_depth, is_leaves):
@@ -116,7 +98,7 @@ def returnFeatureDepth(n_nodes, is_leaves, feature, node_depth):
 def djinn_norm_dist(n_prev, n_curr):
     mean = 0
     var = 3 / (n_prev + n_curr)
-    return(gauss(mean, math.sqrt(var)))
+    return(gauss(mean, var))
 
 #Create network i.e. just how many nodes where 
 #Initialise the weights following the algorihmn in the paper 
@@ -144,37 +126,91 @@ def initWeights(no_inputs, no_outputs, max_depth, no_branches):
 def inputUpdateWeights(no_inputs, all_weights, feature_dict):
     #Fill with 1s
     for i in range(no_inputs):
-        for key in feature_dict:
-            for l in range(feature_dict[key]):
-                all_weights[l][i, i] = 1
+        if str(i) not in feature_dict:
+            continue
+        for l in range(feature_dict[str(i)] - 1):
+            all_weights[l][i, i] = 1
     
     return all_weights
     
 def fillWeights(all_weights, no_outputs, max_depth, n_layer_nodes, 
                 layer_feature_info, parent_info, nn_layer_info, regression = True):
-    ##Add biases 
-    i = 1
-    for l in range(1, max_depth):
-        pre_dense = nn_layer_info[l - 1]
-        curr_dense = nn_layer_info[l]
-        for c in range(n_layer_nodes[l]):
-            parent_index = parent_info[l][c]
-            feature_index = layer_feature_info[l][c]
-            if layer_feature_info[l][c] < 0:
-                for l_leaf in range(l+1, max_depth - 1):
-                    all_weights[l_leaf][parent_index, parent_index] = djinn_norm_dist(pre_dense, curr_dense)
+    ##NOTE Add biases 
+    parent_tracking = {}
+    biases = []
+    #REF the slight odd indexing, l = 0 corresponds to l=0 connections to l = 1
+    #However, in written form l = 0 is just a single node which 
+    #is the convention used in the dictionaries 
+    #thus, l+1 are scattered about. 
+    #Algorithm also says to start at level 1
+    #This computationally refers to the first weight array
+    #which si indexed at 0.
+    for l in range(0, max_depth):
+        pre_dense = nn_layer_info[l]
+        curr_dense = nn_layer_info[l + 1]
+        biases.append(makeBiases(pre_dense, curr_dense))
+        new_neuron_index = pre_dense  #remember indexing is -1 pre_dense contains the full number#Note the slight odd indexing, l = 0 corresponds to l=0 connections to l = 1
+        for c in range(n_layer_nodes[l + 1]):
+            feature_index = layer_feature_info[l + 1][c]
+            direct_parent = parent_info[l + 1][c]
+            if l == 0:
+                parent_index = direct_parent
+            else:
+                parent_index = parent_tracking[(l - 1, direct_parent)]['neuronID']
+            #Leaf
+            if feature_index < 0:
+                for l_leaf in range(l, max_depth - 1): #was l+1 as in the algorithm
+                    leaf_pre_dense = nn_layer_info[l]
+                    leaf_curr_dense = nn_layer_info[l + 1]
+                    all_weights[l_leaf][parent_index, parent_index] = djinn_norm_dist(leaf_pre_dense, leaf_curr_dense)
                 if regression:
                     for i in range(no_outputs):
-                        all_weights[-1][c, i] = djinn_norm_dist(pre_dense, curr_dense)
+                        pre_dense = nn_layer_info[-2]
+                        curr_dense = nn_layer_info[-1]
+                        all_weights[-1][parent_index, i] = djinn_norm_dist(pre_dense, curr_dense)
                 #Classification DJINN currently not working ... needs some modification i.e. info 
                 #on what the leaft corresponds to in classification value.
                 else:
                     all_weights[-1][i, c] = djinn_norm_dist(pre_dense, curr_dense)
+            #Branch
             else:
-                all_weights[l][parent_index, c] = djinn_norm_dist(pre_dense, curr_dense)
-                all_weights[-1][feature_index, c] = djinn_norm_dist(pre_dense, curr_dense)
-            i+=1 
-    return all_weights
+                if new_neuron_index >= np.shape(all_weights[l])[1]:
+                    continue
+                all_weights[l][parent_index, new_neuron_index] = djinn_norm_dist(pre_dense, curr_dense)
+                all_weights[l][feature_index, new_neuron_index] = djinn_norm_dist(pre_dense, curr_dense)
+                parent_tracking[(l, feature_index)] = {'pID' : parent_index,
+                                        'fID':feature_index,
+                                        'neuronID': new_neuron_index}
+                new_neuron_index += 1 #if another branch is present, add to additional neuron
+
+    return all_weights, biases
+
+def makeBiases(pre_dense, curr_dense):
+    biases = np.zeros(curr_dense)
+    for i in range(curr_dense):
+        biases[i] = djinn_norm_dist(pre_dense, curr_dense)
+    return biases
+
+#Neural Network
+def initNN(nn_layer_info, all_weights, all_biases):
+    for i, neurons in enumerate(nn_layer_info):
+        if i == 0:
+            nn_input = keras.Input(shape = (neurons), name ="Latent_space_input")
+            continue
+        weights = tf.constant_initializer(all_weights[i - 1])
+        bias = tf.constant_initializer(all_biases[i - 1])
+        if i == 1:
+            x = layers.Dense(neurons, activation= "relu", kernel_initializer= weights, 
+                                             bias_initializer=bias)(nn_input)
+        elif i == len(neuron_layer_info) - 1:
+            nn_output = layers.Dense(neurons, kernel_initializer = weights, bias_initializer = bias)(x)
+        else:
+            x = layers.Dense(neurons, activation= "relu", kernel_initializer= weights, 
+                                             bias_initializer=bias)(x)
+    
+    nn = keras.Model(nn_input, nn_output, name ="DJINN")
+    nn.summary()
+    return nn
 
 ##Test Tree
 iris = load_iris()
@@ -201,5 +237,6 @@ printUsefulTree(n_nodes, node_depth, is_leaves)
 neuron_layer_info, weights = initWeights(no_inputs, no_outputs, max_depth, branch_counts)
 layer_parents, layer_feature = returnLayerInfo(n_nodes, node_depth, feature)
 weights = inputUpdateWeights(no_inputs, weights, feature_depth)
-weights = fillWeights(weights, no_outputs, max_depth,branch_counts, 
+weights, biases = fillWeights(weights, no_outputs, max_depth,branch_counts, 
                     layer_feature, layer_parents, neuron_layer_info)
+initNN(neuron_layer_info, weights, biases)
