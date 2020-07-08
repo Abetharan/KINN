@@ -1,9 +1,13 @@
 import numpy as np 
+import itertools
 import h5py
 import os 
 import matplotlib.pyplot as plt 
 import random as rand 
 import math
+import pandas as pd
+from scipy.special import comb
+
 rand.seed(0)
 np.random.seed(0)
 #global constant
@@ -137,52 +141,38 @@ def AllSmoothRamp(nx, L, lower_cutof, upper_cutof, Te_begin, Te_end, Te_low, Te_
     return(x_centered, Te, ne, Z)
 
 
+def smoothstep(x, x_min=0, x_max=1, N=1):
+    #https://stackoverflow.com/questions/45165452/how-to-implement-a-smooth-clamp-function-in-python
+    x = np.clip((x - x_min) / (x_max - x_min), 0, 1)
 
-def Ramp(nx, L, lower_cut_off, upper_cut_off, Te_low, Te_up, ne_low, ne_top, z_low, z_top):
-    lower_cutof = lower_cut_off
-    upper_cutof = upper_cut_off
-    x_up = np.linspace(0, lower_cutof*L, int(nx*0.333))
-    step = x_up[1] - x_up[0]
-    x_ramp = np.linspace(lower_cutof*L + step/10, upper_cutof*L, int(nx*0.33333) + 1)
-    step = x_ramp[1] - x_ramp[0]
-    x_down = np.linspace(upper_cutof*L+step/10, L, int(0.3333*nx))
-    x = np.concatenate((x_up, x_ramp, x_down))
-    # x = np.linspace(0, L, nx + 1)
-    #x = np.linspace(0, L, nx + 1)
+    result = 0
+    for n in range(0, N + 1):
+         result += comb(N + n, n) * comb(2 * N + 1, N - n) * (-x) ** n
+
+    result *= x ** (N + 1)
+
+    return result
+def Ramp(nx, L, lower_cut_off, upper_cut_off, Te_low, Te_up, ne_low, ne_up, Z_low, Z_up):
+    x = np.linspace(0, L, nx)
     x_centered = np.array([(x[i] + x[i + 1]) /2 for i in range(len(x) -  1)])
+    lower_limit = lower_cut_off*L#x_centered[int(nx*0.4)]
+    upper_limit = upper_cut_off*L#x_centered[int(nx*0.7)]
+
+    ramp = smoothstep(x_centered, lower_limit, upper_limit, N = 2)
+    Te = (ramp * (Te_up - Te_low)) + Te_low
+
+    ne = np.flip((ramp * (ne_up - ne_low)) + ne_low)
+
     
-    def smooth(x, lower_value, upper_value, lower_limit, upper_limit):
-        Var = np.zeros(len(x))
-        counter = 0
-        for i in range(len(x)):
-            if x[i] < lower_limit:
-                Var[i] =  lower_value
-            elif x[i] > upper_limit:
-                Var[i] = upper_value
-            else:
-                # Var[i] = (upper_value - lower_value) * np.tanh((x[i] - lower_limit) / (upper_limit - lower_limit)) + lower_value
-                # Var[i] = (upper_value - lower_value) * (1 /(1 + np.exp((x[i] - lower_limit) / (upper_limit - lower_limit))))+ lower_value
-            #     # Var[i] = (upper_value - lower_value) * (3 * ((x[i] - lower_limit) / (upper_limit - lower_limit))**2 
-                # - 2 * ((x[i] - lower_limit) / (upper_limit - lower_limit))**3) + lower_value
-                Var[i] = (upper_value - lower_value) * (6 * ((x[i] - lower_limit) / (upper_limit - lower_limit))**5 
-                - 15 * ((x[i] - lower_limit) / (upper_limit - lower_limit))**4 + 10 * ((x[i] - lower_limit) / (upper_limit - lower_limit))**3) + lower_value
-                # print(Var[i])
-        return Var         
-
-    Te_Up = Te_up 
-    Te_Down = Te_low 
-    lower_limit = lower_cutof*L#x_centered[int(nx*0.4)]
-    upper_limit = upper_cutof*L#x_centered[int(nx*0.7)]
-
-    Te = smooth(x_centered, Te_Up, Te_Down, lower_limit, upper_limit)
+    Z = np.flip((ramp * (Z_up - Z_low)) + Z_low)
+    # plt.figure(0)
+    # plt.plot(x_centered, Te, label = 'Te')
+    # plt.figure(1)
+    # plt.plot(x_centered, ne, label  = 'ne')
+    # plt.figure(2)
+    # plt.plot(x_centered, Z, label = 'Z')
     
-    ne_Up = ne_top * 1e26
-    ne_Down = ne_low * 1e26
-    ne = smooth(x_centered, ne_Up, ne_Down, lower_limit, upper_limit) 
-
-    Z_Up = z_top#2
-    Z_Down = z_low#36.64
-    Z = smooth(x_centered, Z_Up, Z_Down, lower_limit, upper_limit) 
+    # plt.show()
     
     return(x_centered, Te, ne, Z)
 
@@ -218,80 +208,144 @@ def SpitzerHarm(x, T, ne, Z):
     HeatFlowE[-1] = 0
     return(-1 * HeatFlowE[1:-1], gradTe[1:-1])
 
+def santityCheck(array):
+
+    if any(array < 0):
+        return 1
+
+    for i in range(2, len(array) - 2):
+        mean = np.mean(array[int(i - 2): int(i + 2)])
+        if array[i] > 1.2*mean or  array[i] < mean*0.8:
+            return 1 
+    
+    return 0
+
 def getTwoRandom():
     k = rand.random()
     k_1 = rand.random()
-    if k < k_1:
-        getTwoRandom() 
+    if k > k_1:
+        return getTwoRandom() 
     else:
         return(k, k_1)
-def saveToHdF5(hdf5_file, i, GradTe, Te, ne, Z, x, qe, Training):
-    if training:
-        path = "x_training/"
-        hdf5_file.create_dataset("".join([path, "GradTe/", str(i)]),
-                            data = GradTe, compression="gzip")
-        hdf5_file.create_dataset("".join([path, "Te/", str(i)]),
-                            data = Te, compression="gzip")
-        hdf5_file.create_dataset("".join([path, "ne/", str(i)]),
-                            data = ne, compression="gzip")
-        hdf5_file.create_dataset("".join([path, "Z/", str(i)]),
-                            data = Z, compression="gzip")
-        hdf5_file.create_dataset("".join(["y_training/", "Qe/", str(i)]),
-                            data = qe, compression="gzip")
-    else:
-        path = "x_testing/"
-        hdf5_file.create_dataset("".join([path, "GradTe/", str(i)]),
-                            data = GradTe, compression="gzip")
-        hdf5_file.create_dataset("".join([path, "Te/", str(i)]),
-                            data = Te, compression="gzip")
-        hdf5_file.create_dataset("".join([path, "ne/", str(i)]),
-                            data = ne, compression="gzip")
-        hdf5_file.create_dataset("".join([path, "Z/", str(i)]),
-                            data = Z, compression="gzip")
-        hdf5_file.create_dataset("".join(["y_testing/", "Qe/", str(i)]),
-                            data = qe, compression="gzip")
+def getBiggerOther(array, n):
+    k = array[np.random.randint(0, n - 1)]
+    k_1 = array[np.random.randint(0, n - 1)]
+    if k > k_1:
+        return getBiggerOther(array, n)
+    
+    return(k, k_1)
 
+def saveToHDF5(dset, data):
+    dset.create_dataset('data', data = data,)
+
+def permutate(Te, ne, Z):
+    Te_perms = [Te, np.flip(Te)]
+    ne_perms = [ne, np.flip(ne)]
+    Z_perms = [Z, np.flip(Z)]
+    arrays = [Te_perms, ne_perms, Z_perms]
+    return list(itertools.product(*arrays))
+
+no_samples = 5000
+split = 4000
 base_path = "/Users/shiki/DATA/KINN_RELATED"
-Data_h5 = h5py.File(os.path.join(base_path, "Training.hdf5"), "w")
+Data_h5 = h5py.File(os.path.join(base_path, "Data.hdf5"), "w")
+trgradte = Data_h5.create_group("GradTe")
+trTe = Data_h5.create_group("Te")
+trne = Data_h5.create_group("ne")
+trZ = Data_h5.create_group("Z")
+trqe = Data_h5.create_group("qe")
+trx = Data_h5.create_group("x")
 
-ne_range = np.linspace(1e19, 1e28, 100) #1e21-1e28
-te_range =  np.linspace(1, 3000, 100)# 1ev - 3kev
-z_range =   np.linspace(2, 38, 100)#2 - 38
-L_range =  np.linspace(3E-3, 3, 100)#3mm - 3m
-nx = 101
-n = 100
-no_samples = 300000
-training = True
-j = 0 
-for i in range(no_samples):
+ne_range = np.linspace(1e19, 1e28, 1000) #1e21-1e28
+te_range =  np.linspace(1, 3000, 1000)# 1ev - 3kev
+z_range =  np.linspace(1, 50, 1000)#2 - 38
+L_range =  np.linspace(3E-3, 3, 1000)#3mm - 3m
+nx = 100
+n = 1000
+j = 0
+cell_wall_df = pd.DataFrame(columns=['GradT', 'qe'])
+cell_centre_df = pd.DataFrame(columns=['Te','ne', 'Z'])
+df_grad_te = np.array([])
+df_qe = np.array([])
+df_ne = np.array([])
+df_x = np.array([])
+df_Z = np.array([])
+df_Te = np.array([])
+
+def appendAllPermutations(x_arr, perms, df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x):
+    for _, val in enumerate(all_permutations_epp):
+        tdf_t = np.array(val[0])
+        tdf_ne = np.array(val[1])
+        tdf_Z = np.array(val[2])
+        qe, gradTe = SpitzerHarm(x, val[0], val[1], val[2])
+        tdf_qe = np.array(qe)
+        tdf_gradT = np.array(gradTe)
+        tdf_x = np.array(x_arr)
+        
+        df_Te = np.concatenate((df_Te, tdf_t))
+        df_ne = np.concatenate((df_ne, tdf_ne))
+        df_qe = np.concatenate((df_qe, tdf_qe))
+        df_grad_te = np.concatenate((df_grad_te, tdf_gradT))
+        df_Z = np.concatenate((df_Z, tdf_Z))
+        df_x = np.concatenate((df_x, tdf_x))
+    
+    return  df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x
+
+        
+
+for i in range(no_samples + 1):
     L = L_range[np.random.randint(0, n)]
-    z_1 = z_range[np.random.randint(0, n)]
-    z_2 = z_range[np.random.randint(0, n)]
-    n_1 = ne_range[np.random.randint(0, n)]
-    n_2 = ne_range[np.random.randint(0, n)]
-    t_1 = te_range[np.random.randint(0, n)]
-    t_2 = te_range[np.random.randint(0, n)]
-    # lower, upper = getTwoRandom()  
+    z_1, z_2 = getBiggerOther(z_range, n)
+    t_1, t_2 = getBiggerOther(te_range, n)
+    n_1, n_2 = getBiggerOther(ne_range, n)
+    lower, upper = getTwoRandom()  
     Te_random = np.random.uniform(1E-6, 0.9)
     # ne_random = np.random.uniform(0.90, 1.1)
-    if i == int(no_samples*0.85):
-        training = False
     
     x, Te, ne, Z = epperlein_short(nx, L ,z_1, n_1, t_1, Te_random) 
-    qe, gradTe = SpitzerHarm(x, Te, ne, Z)
-    saveToHdF5(Data_h5, j, gradTe, Te, ne, Z, x, qe, training)
-    
-    j+=1
+    if bool(santityCheck(Te)):
+        continue
+    if bool(santityCheck(ne)):
+        continue
+    if bool(santityCheck(Z)):
+        continue 
+
+    all_permutations_epp = permutate(Te, ne, Z)
+    df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x = appendAllPermutations(x, all_permutations_epp,df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x)
 
     x, Te, ne, Z = TwoTemperatureBath(nx, L, z_1, t_1, t_2) 
-    qe, gradTe = SpitzerHarm(x, Te, ne, Z)
-    saveToHdF5(Data_h5, j, gradTe, Te, ne, Z, x, qe, training)
+    if bool(santityCheck(Te)):
+        continue
+    if bool(santityCheck(ne)):
+        continue
+    if bool(santityCheck(Z)):
+        continue 
 
-    j+=1
-    # x, Te, ne, Z = Ramp(nx, L, lower_cut_off = lower , upper_cut_off = upper, Te_low = t_1, Te_up = t_2, 
-    #                     ne_low = t_1, ne_top = t_2 , z_low = z_1, z_top = z_2) 
+    all_permutations_ttbath = permutate(Te, ne, Z)
+    df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x = appendAllPermutations(x, all_permutations_epp,df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x)    
+    x, Te, ne, Z = Ramp(nx, L, lower_cut_off = lower , upper_cut_off = upper, Te_low = t_1, Te_up = t_2, 
+                        ne_low = t_1, ne_up = t_2 , Z_low = z_1, Z_up = z_2) 
+    if bool(santityCheck(Te)):
+        continue
+    if bool(santityCheck(ne)):
+        continue
+    if bool(santityCheck(Z)):
+        continue 
+    
+    all_permutations_ramp = permutate(Te, ne, Z)
+    df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x = appendAllPermutations(x, all_permutations_epp,df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x)
+
+
     # x, Te, ne, Z = AllSmoothRamp(nx, L, lower_cutof = lower , upper_cutof = upper, Te_begin = t_2 * upper, 
                                 # Te_end = t_1 * lower, Te_low = t_1, Te_top = t_2, ne_begin =n_2 * upper,
                                 # ne_end =n_1*lower, ne_low = n_1, ne_top =n_2 , Z_begin = z_2*upper,
-                                # Z_end = z_1*lower ,z_low = z_1, z_top = z_2) 
+                                # Z_end = z_1*lower ,z_low = z_1, z_top = z_2] 
+
+trgradte.create_data_set("data", df_grad_te )
+trTe.create_data_set("data", df_Te )
+trne.create_data_set("data", df_ne)
+trZ.create_data_set("data", df_Z)
+trqe.create_data_set("data", df_qe)
+trx.create_data_set("data", df_x)
+
 Data_h5.close()
