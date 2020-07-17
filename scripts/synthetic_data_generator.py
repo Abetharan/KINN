@@ -153,7 +153,7 @@ def smoothstep(x, x_min=0, x_max=1, N=1):
 
     return result
 def Ramp(nx, L, lower_cut_off, upper_cut_off, Te_low, Te_up, ne_low, ne_up, Z_low, Z_up):
-    x = np.linspace(0, L, nx)
+    x = np.linspace(0, L, nx + 1)
     x_centered = np.array([(x[i] + x[i + 1]) /2 for i in range(len(x) -  1)])
     lower_limit = lower_cut_off*L#x_centered[int(nx*0.4)]
     upper_limit = upper_cut_off*L#x_centered[int(nx*0.7)]
@@ -273,7 +273,7 @@ df_Z = np.array([])
 df_Te = np.array([])
 
 def appendAllPermutations(x_arr, perms, df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x):
-    for _, val in enumerate(all_permutations_epp):
+    for _, val in enumerate(perms):
         tdf_t = np.array(val[0])
         tdf_ne = np.array(val[1])
         tdf_Z = np.array(val[2])
@@ -322,7 +322,7 @@ for i in range(no_samples + 1):
         continue 
 
     all_permutations_ttbath = permutate(Te, ne, Z)
-    df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x = appendAllPermutations(x, all_permutations_epp,df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x)    
+    df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x = appendAllPermutations(x, all_permutations_ttbath,df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x)    
     x, Te, ne, Z = Ramp(nx, L, lower_cut_off = lower , upper_cut_off = upper, Te_low = t_1, Te_up = t_2, 
                         ne_low = t_1, ne_up = t_2 , Z_low = z_1, Z_up = z_2) 
     if bool(santityCheck(Te)):
@@ -333,7 +333,7 @@ for i in range(no_samples + 1):
         continue 
     
     all_permutations_ramp = permutate(Te, ne, Z)
-    df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x = appendAllPermutations(x, all_permutations_epp,df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x)
+    df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x = appendAllPermutations(x, all_permutations_ramp,df_Te, df_ne, df_qe, df_grad_te, df_Z, df_x)
 
 
     # x, Te, ne, Z = AllSmoothRamp(nx, L, lower_cutof = lower , upper_cutof = upper, Te_begin = t_2 * upper, 
